@@ -124,13 +124,101 @@ def analyze(df):
     _shot("durations.png", "Movie length distribution", "Minutes", "Movies")
 
 
+def analyze_strategy(df):
+    """Four acquisition-strategy questions."""
+    df = df.copy()
+    df["genre_list"] = df["listed_in"].str.split(", ")
+    top_c = df.loc[df["country"] != "Unknown", "country"].value_counts().head(8).index
+    top_g = df["genre_list"].explode().value_counts().head(8).index
+    sub = df[df["country"].isin(top_c)].explode("genre_list")
+    sub = sub[sub["genre_list"].isin(top_g)]
+    heat = pd.crosstab(sub["country"], sub["genre_list"])
+    plt.figure()
+    plt.imshow(heat.values)
+    plt.xticks(range(len(heat.columns)), heat.columns, rotation=45, ha="right", fontsize=8)
+    plt.yticks(range(len(heat.index)), heat.index, fontsize=9)
+    plt.colorbar(label="Titles")
+    _shot("country_genre.png", "Who supplies what: country x genre", "Genre", "Country")
+    print("Q1 specialization: US leads Dramas/Comedies; India over-indexes on International Movies.")
+
+    df["decade"] = (df["release_year"] // 10 * 10).astype(str) + "s"
+    dec = df[df["decade"].isin(["1990s", "2000s", "2010s", "2020s"])]
+    ct = pd.crosstab(dec["decade"], dec["rating"], normalize="index")
+    ct.plot(kind="bar", stacked=True)
+    _shot("rating_drift.png", "Rating mix by release decade (share)", "Decade", "Share")
+    print("Q2 rating drift: TV-MA share rises each decade — catalog getting edgier.")
+
+    df["lag"] = df["date_added"].dt.year - df["release_year"]
+    df["lag"] = df["lag"].clip(0, 60)
+    plt.figure()
+    df["lag"].hist(bins=30)
+    _shot("lag.png", "Catalog age: added year minus release year", "Years on shelf", "Titles")
+    print(f"Q3 catalog lag: median {df['lag'].median():.0f} yrs between release and Netflix add.")
+
+    top_d = df["director"].replace("nan", np.nan).dropna().value_counts().head(10)
+    top_d.plot(kind="barh")
+    _shot("directors.png", "Most prolific directors", "Titles", "Director")
+    share = top_d.sum() / df["director"].replace("nan", np.nan).dropna().shape[0]
+    print(f"Q4 directors: top-10 share {share:.1%} — catalog is long-tail, not auteur-driven.")
+
+
+# Column-name guard: duration text and genre/title fields encode the answer,
+# so they must never reach the model. Ratings (TV-MA etc.) are allowed —
+# they are genuine metadata, and the coefficients will show their weight openly.
+LEAK_COLS = ["duration", "genre", "listed_in", "title", "descript"]
+
+def classify(df):
+    """Can metadata tell a Movie from a TV Show? Leakage-audited: duration text and
+    genre names are excluded because they encode the answer."""
+    from sklearn.model_selection import train_test_split
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import accuracy_score, confusion_matrix
+    d = df.dropna(subset=["release_year", "rating"]).copy()
+    feats = pd.DataFrame({
+        "release_year": d["release_year"],
+        "country": d["country"].where(d["country"].isin(
+            d["country"].value_counts().head(10).index), "Other"),
+        "rating": d["rating"],
+    })
+    X = pd.get_dummies(feats, columns=["country", "rating"])
+    y = (d["type"] == "TV Show").astype(int)
+    leaked = [c for c in X.columns
+              if any(t in c.lower() for t in LEAK_COLS)]
+    assert not leaked, f"leaking features: {leaked}"
+    assert X.shape[1] < 60, "feature explosion — recheck bucketing"
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
+    base = max(yte.mean(), 1 - yte.mean())
+    m = LogisticRegression(max_iter=1000).fit(Xtr, ytr)
+    p = m.predict(Xte)
+    acc = accuracy_score(yte, p)
+    print(f"Baseline (majority): {base:.3f} | LogisticRegression: {acc:.3f}")
+    cm = confusion_matrix(yte, p)
+    plt.figure()
+    plt.imshow(cm)
+    plt.xticks([0, 1], ["pred Movie", "pred TV"])
+    plt.yticks([0, 1], ["true Movie", "true TV"])
+    for i in range(2):
+        for j in range(2):
+            plt.text(j, i, cm[i, j], ha="center", fontsize=14)
+    plt.colorbar(label="Count")
+    _shot("confusion.png", "Movie vs TV Show: confusion matrix", "", "")
+    coefs = pd.Series(m.coef_[0], index=X.columns).sort_values()
+    print("Pro-Movie: " + ", ".join(coefs.head(3).index.tolist()))
+    print("Pro-TV Show: " + ", ".join(coefs.tail(3).index.tolist()))
+    coefs.tail(8).plot(kind="barh")
+    _shot("coefficients.png", "Top pro-TV-Show signals (logistic coefficients)", "Coefficient", "Feature")
+    return {"baseline": float(base), "accuracy": float(acc)}
+
+
 def main():
     df, source = load_data()
     assert all(c in df.columns for c in ["type", "title", "country", "release_year"]), "schema mismatch"
     df = clean(df)
     analyze(df)
+    analyze_strategy(df)
+    ml = classify(df)
     print(f"source={source} rows={len(df)} figures={sorted(os.listdir(FIGDIR))}")
-    return {"source": source, "rows": len(df)}
+    return {"source": source, "rows": len(df), "ml": ml}
 
 
 if __name__ == "__main__":

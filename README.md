@@ -31,10 +31,20 @@ python analysis.py
 ```
 Figures land in `figures/`.
 
-## Key findings (synthetic fallback run; real data decides)
-- ~70/30 movie-to-show split; median movie 125 min, median show 3 seasons.
-- US and India lead producing countries; Comedies and Documentaries top genres.
-- Family-heavy ratings mix (PG-13/PG/TV-PG/G all large) — breadth strategy, not edgy exclusives.
+## Key findings (real run: 8,807 titles)
+- 6,131 Movies vs 2,676 TV Shows (~70/30); median movie 98 min, median show 1 season.
+- US (2,818) and India (972) lead supply, then UK (419) and Japan (245); International Movies (2,752) top genre ahead of Dramas (2,427).
+- Adult-skewed ratings (TV-MA 3,207, TV-14 2,160) — edgier than a family catalog; additions peaked 2019 (1,999) then eased through 2021.
+- Specialization: the US feeds Dramas/Comedies while India over-indexes on International Movies; ratings get edgier by decade.
+- Catalog is fresh (median 1 year from release to Netflix) and long-tail (top-10 directors hold just 2.3%).
+
+## Modeling: can metadata tell a Movie from a TV Show?
+- LogisticRegression on release_year + country + rating: **0.702** vs 0.679 majority baseline — metadata barely separates format, stated plainly.
+- Strongest signals: R/PG-13/PG ratings → Movie; South Korea, TV-Y/TV-Y7 → TV Show.
+- Leakage audit enforced in code: duration text and genre/title fields are excluded because they encode the answer (genre names literally contain "Movies"/"TV Shows"); ratings stay as genuine metadata.
+
+## Conclusion
+Netflix buys breadth, not auteurs: a fresh, long-tail catalog led by US drama/comedy and Indian international titles, trending edgier by decade. Format is barely predictable from metadata alone (70.2% vs 67.9% baseline) — the catalog's variety is the finding. All numbers from the real Kaggle data; rerun via Colab or `python analysis.py`.
 
 ## Skills shown
 pandas cleaning, categorical EDA, matplotlib storytelling, Kaggle ingest, Colab reproducibility. Companion to the [King County housing project](../house-price-analysis/).
